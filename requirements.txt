@@ -1,1 +1,2 @@
 duo-client==3.0
+requests==2.13.0
