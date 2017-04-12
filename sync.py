@@ -31,10 +31,11 @@ import requests
 import sys
 import time
 import urlparse
+import os
 
 import duo_client
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description='Sync between Foxpass and Duo.')
@@ -43,6 +44,7 @@ parser.add_argument('--interval', default=5, type=int, help='Minutes to wait bet
 parser.add_argument('--foxpass-hostname', default='https://api.foxpass.com',
                     help='Foxpass API URL, e.g. https://api.foxpass.com (or FOXPASS_HOSTNAME env. var.)')
 parser.add_argument('--foxpass-api-key', help='Foxpass API key (or FOXPASS_API_KEY env. var.)')
+parser.add_argument('--foxpass-group', help='Foxpass group name to sync', default=None)
 parser.add_argument('--duo-hostname', help='Duo URL, e.g. duo-XXXX.duosecurity.com (or DUO_HOSTNAME env. var.)')
 parser.add_argument('--duo-ikey', help='Duo API ikey (or DUO_IKEY env. var.)')
 parser.add_argument('--duo-skey', help='Duo API skey (or DUO_SKEY env. var.)')
@@ -65,19 +67,36 @@ admin_api = duo_client.Admin(
     host=DUO_HOSTNAME
 )
 
-def get_foxpass_users():
+def get_foxpass_users(group=None):
     headers={'Accept': 'application/json',
              'Authorization': 'Token {}'.format(FOXPASS_API_KEY)}
-    url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
 
-    r = requests.get(url, headers=headers)
-    r.raise_for_status()
-    json_data = r.json()
+    if group is not None:
+        users = []
+        group_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/groups/{}/members/'.format(group))
 
-    if 'data' in json_data:
-        return json_data['data']
+        r = requests.get(group_url, headers=headers)
+        r.raise_for_status()
 
-    return None
+        for user in r.json()['data']:
+            user_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/{}/'.format(user['username']))
+            r = requests.get(user_url, headers=headers)
+            r.raise_for_status()
+
+            users.append(r.json()['data'])
+
+        return users
+    else:
+        url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
+
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        json_data = r.json()
+
+        if 'data' in json_data:
+            return json_data['data']
+
+    return []
 
 def sync():
     duo_users = admin_api.get_users()
@@ -86,7 +105,7 @@ def sync():
         if user['email']:
             duo_email_set.add(user['email'])
 
-    foxpass_users = get_foxpass_users()
+    foxpass_users = get_foxpass_users(ARGS.foxpass_group)
     foxpass_email_set = set()
     for user in foxpass_users:
         if user['active']:
