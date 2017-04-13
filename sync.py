@@ -61,42 +61,39 @@ except KeyError as e:
     logger.error('No value in args. or env. for {}'.format(str(e)))
     sys.exit(1)
 
+FOXPASS_REQUEST_HEADERS={'Accept': 'application/json',
+                         'Authorization': 'Token {}'.format(FOXPASS_API_KEY)}
+
 admin_api = duo_client.Admin(
     ikey=DUO_IKEY,
     skey=DUO_SKEY,
     host=DUO_HOSTNAME
 )
 
-def get_foxpass_users(group=None):
-    headers={'Accept': 'application/json',
-             'Authorization': 'Token {}'.format(FOXPASS_API_KEY)}
+def get_foxpass_users_in_group(group):
+    group_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/groups/{}/members/'.format(group))
 
-    if group is not None:
-        users = []
-        group_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/groups/{}/members/'.format(group))
+    r = requests.get(group_url, headers=FOXPASS_REQUEST_HEADERS)
+    r.raise_for_status()
 
-        r = requests.get(group_url, headers=headers)
-        r.raise_for_status()
+    json_data = r.json()
 
-        for user in r.json()['data']:
-            user_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/{}/'.format(user['username']))
-            r = requests.get(user_url, headers=headers)
-            r.raise_for_status()
+    if 'data' in json_data:
+        return [user['username'] for user in json_data['data']]
 
-            users.append(r.json()['data'])
+    return None
 
-        return users
-    else:
-        url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
+def get_all_foxpass_users():
+    url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
 
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        json_data = r.json()
+    r = requests.get(url, headers=FOXPASS_REQUEST_HEADERS)
+    r.raise_for_status()
+    json_data = r.json()
 
-        if 'data' in json_data:
-            return json_data['data']
+    if 'data' in json_data:
+        return json_data['data']
 
-    return []
+    return None
 
 def sync():
     duo_users = admin_api.get_users()
@@ -105,10 +102,17 @@ def sync():
         if user['email']:
             duo_email_set.add(user['email'])
 
-    foxpass_users = get_foxpass_users(ARGS.foxpass_group)
+    foxpass_users = get_all_foxpass_users()
+
+    group_members = None
+    if ARGS.foxpass_group:
+        group_members = set(get_foxpass_users_in_group(ARGS.foxpass_group))
+
+    # make a set of foxpass users that should be in duo. they must be active and if a group is
+    # specified, they must be in that group
     foxpass_email_set = set()
     for user in foxpass_users:
-        if user['active']:
+        if user['active'] and (not group_members or user['username'] in group_members):
             foxpass_email_set.add(user['email'])
 
     # duo_email_set is all duo email addresses
@@ -116,16 +120,16 @@ def sync():
 
     # enroll into duo every foxpass email address that's not already there
     for email in foxpass_email_set:
-       # already in duo? skip to next
-       if email in duo_email_set:
-           continue
+         # already in duo? skip to next
+         if email in duo_email_set:
+             continue
 
-       logger.info("Need to enroll {}".format(email))
-       username = email.split('@')[0]
-       try:
-           admin_api.enroll_user(username, email)
-       except:
-           logger.exception("Can't enroll user {}".format(email))
+         logger.info("Need to enroll {}".format(email))
+         username = email.split('@')[0]
+         try:
+             pass # admin_api.enroll_user(username, email)
+         except:
+             logger.exception("Can't enroll user {}".format(email))
 
 def main():
     while True:
