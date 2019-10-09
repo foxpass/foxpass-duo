@@ -44,7 +44,7 @@ parser.add_argument('--interval', default=5, type=int, help='Minutes to wait bet
 parser.add_argument('--foxpass-hostname', default='https://api.foxpass.com',
                     help='Foxpass API URL, e.g. https://api.foxpass.com (or FOXPASS_HOSTNAME env. var.)')
 parser.add_argument('--foxpass-api-key', help='Foxpass API key (or FOXPASS_API_KEY env. var.)')
-parser.add_argument('--foxpass-group', help='Foxpass group name to sync', default=None)
+parser.add_argument('--foxpass-group', help='Foxpass group name to sync (or FOXPASS_GROUP env. var.)')
 parser.add_argument('--duo-hostname', help='Duo URL, e.g. duo-XXXX.duosecurity.com (or DUO_HOSTNAME env. var.)')
 parser.add_argument('--duo-ikey', help='Duo API ikey (or DUO_IKEY env. var.)')
 parser.add_argument('--duo-skey', help='Duo API skey (or DUO_SKEY env. var.)')
@@ -53,6 +53,7 @@ ARGS = parser.parse_args()
 try:
     FOXPASS_HOSTNAME = ARGS.foxpass_hostname or os.environ['FOXPASS_HOSTNAME']
     FOXPASS_API_KEY = ARGS.foxpass_api_key or os.environ['FOXPASS_API_KEY']
+    FOXPASS_GROUP = ARGS.foxpass_group or os.environ.get('FOXPASS_GROUP', None)
 
     DUO_HOSTNAME = ARGS.duo_hostname or os.environ['DUO_HOSTNAME']
     DUO_IKEY = ARGS.duo_ikey or os.environ['DUO_IKEY']
@@ -105,8 +106,8 @@ def sync():
     foxpass_users = get_all_foxpass_users()
 
     group_members = None
-    if ARGS.foxpass_group:
-        group_members = set(get_foxpass_users_in_group(ARGS.foxpass_group))
+    if FOXPASS_GROUP:
+        group_members = set(get_foxpass_users_in_group(FOXPASS_GROUP))
 
     # make a set of foxpass users that should be in duo. they must be active and if a group is
     # specified, they must be in that group
