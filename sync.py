@@ -28,9 +28,9 @@
 import argparse
 import logging
 import requests
+from six.moves.urllib import parse
 import sys
 import time
-import urlparse
 import os
 
 import duo_client
@@ -39,7 +39,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description='Sync between Foxpass and Duo.')
-parser.add_argument('--once', action='store_true', help='Run once and exit')
+parser.add_argument('--once', action='store_true', help='Run once and exit (or non-empty FOXPASS_DUO_SYNC_ONCE env. var.)')
 parser.add_argument('--interval', default=5, type=int, help='Minutes to wait between runs')
 parser.add_argument('--foxpass-hostname', default='https://api.foxpass.com',
                     help='Foxpass API URL, e.g. https://api.foxpass.com (or FOXPASS_HOSTNAME env. var.)')
@@ -53,7 +53,6 @@ ARGS = parser.parse_args()
 try:
     FOXPASS_HOSTNAME = ARGS.foxpass_hostname or os.environ['FOXPASS_HOSTNAME']
     FOXPASS_API_KEY = ARGS.foxpass_api_key or os.environ['FOXPASS_API_KEY']
-    FOXPASS_GROUP = ARGS.foxpass_group or os.environ.get('FOXPASS_GROUP', None)
 
     DUO_HOSTNAME = ARGS.duo_hostname or os.environ['DUO_HOSTNAME']
     DUO_IKEY = ARGS.duo_ikey or os.environ['DUO_IKEY']
@@ -61,6 +60,9 @@ try:
 except KeyError as e:
     logger.error('No value in args. or env. for {}'.format(str(e)))
     sys.exit(1)
+
+FOXPASS_GROUP = ARGS.foxpass_group or os.environ.get('FOXPASS_GROUP', None)
+FOXPASS_DUO_SYNC_ONCE = bool(ARGS.once or os.environ.get('FOXPASS_DUO_SYNC_ONCE', None))
 
 FOXPASS_REQUEST_HEADERS={'Accept': 'application/json',
                          'Authorization': 'Token {}'.format(FOXPASS_API_KEY)}
@@ -72,7 +74,7 @@ admin_api = duo_client.Admin(
 )
 
 def get_foxpass_users_in_group(group):
-    group_url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/groups/{}/members/'.format(group))
+    group_url = parse.urljoin(FOXPASS_HOSTNAME, '/v1/groups/{}/members/'.format(group))
 
     r = requests.get(group_url, headers=FOXPASS_REQUEST_HEADERS)
     r.raise_for_status()
@@ -85,7 +87,7 @@ def get_foxpass_users_in_group(group):
     return None
 
 def get_all_foxpass_users():
-    url = urlparse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
+    url = parse.urljoin(FOXPASS_HOSTNAME, '/v1/users/')
 
     r = requests.get(url, headers=FOXPASS_REQUEST_HEADERS)
     r.raise_for_status()
@@ -97,11 +99,10 @@ def get_all_foxpass_users():
     return None
 
 def sync():
-    duo_users = admin_api.get_users()
-    duo_email_set = set()
-    for user in duo_users:
+    duo_users_by_email = {}
+    for user in admin_api.get_users():
         if user['email']:
-            duo_email_set.add(user['email'])
+            duo_users_by_email[user['email']] = user
 
     foxpass_users = get_all_foxpass_users()
 
@@ -111,24 +112,24 @@ def sync():
 
     # make a set of foxpass users that should be in duo. they must be active and if a group is
     # specified, they must be in that group
-    foxpass_email_set = set()
+    foxpass_users_by_email = {}
     for user in foxpass_users:
         if user['active'] and (not group_members or user['username'] in group_members):
-            foxpass_email_set.add(user['email'])
+            foxpass_users_by_email[user['email']] = user
 
-    # duo_email_set is all duo email addresses
-    # foxpass_email_set is all email addresses for ACTIVE foxpass users
+    # - duo_users_by_email is all duo users by email addresses
+    # - foxpass_users_by_email is all foxpass user by
+    #   email addresses for ACTIVE foxpass users
 
     # enroll into duo every foxpass email address that's not already there
-    for email in foxpass_email_set:
+    for email, fp_user in foxpass_users_by_email.items():
          # already in duo? skip to next
-         if email in duo_email_set:
+         if email in duo_users_by_email:
              continue
 
          logger.info("Need to enroll {}".format(email))
-         username = email.split('@')[0]
          try:
-             pass # admin_api.enroll_user(username, email)
+             admin_api.enroll_user(fp_user['username'], email)
          except:
              logger.exception("Can't enroll user {}".format(email))
 
@@ -141,7 +142,7 @@ def main():
         except:
             logger.exception('Unhandled exception during sync')
 
-        if ARGS.once:
+        if FOXPASS_DUO_SYNC_ONCE:
             return
 
         logger.info('Sleeping for {} minuntes'.format(ARGS.interval))
